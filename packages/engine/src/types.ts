@@ -62,6 +62,8 @@ export interface Identity {
 
 /** Room-level metadata published by the host under `/meta`. */
 export interface RoomMeta {
+  /** Optional session execution identity; independent of plugin and round index. */
+  sessionRunId?: string
   pluginId: string
   pluginVersion: string
   title: string

@@ -1,15 +1,17 @@
 <script setup lang="ts">
 // Hosts a SAVED session lineup (playlist). Fetches its ordered game ids, then runs
 // them through the same SessionHostRoom (skipping the picker).
+import type { BoardDefinition } from '@doot-games/sdk'
 const route = useRoute()
 const id = computed(() => String(route.params.id))
-const { data: playlist, error } = await useFetch<{ name: string; games: string[] }>(() => `/api/playlists/${id.value}`)
+const { data: playlist, error } = await useFetch<{ name: string; games: string[]; board: BoardDefinition | null }>(() => `/api/playlists/${id.value}`)
 useDootSeo({ title: playlist.value?.name ?? 'Host a session' })
 </script>
 
 <template>
   <ClientOnly>
-    <SessionHostRoom v-if="playlist?.games?.length" :game-ids="playlist.games" />
+    <SessionHostRoom v-if="playlist?.board" :key="id" :board-definition="playlist.board" :board-source-id="id" />
+    <SessionHostRoom v-else-if="playlist?.games?.length" :game-ids="playlist.games" />
     <div v-else class="boot">
       <template v-if="error">
         <h2>Lineup not found</h2>

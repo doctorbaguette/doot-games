@@ -3,13 +3,14 @@ import { computed } from 'vue'
 import { injectDootRoom } from '@doot-games/engine/vue'
 import type { ExternalChallengeContent } from './block'
 import TournamentBracket from './TournamentBracket.vue'
-import { champion, currentMatch, tournamentScores } from './tournament'
+import BettingPanel from './BettingPanel.vue'
+import { champion, currentMatch, scoringPlayers, tournamentScores } from './tournament'
 const props = defineProps<{ content: ExternalChallengeContent }>()
 const room = injectDootRoom()
 const current = computed(() => props.content.tournament ? currentMatch(props.content.tournament) : undefined)
 const winner = computed(() => props.content.tournament ? champion(props.content.tournament) : undefined)
 const participating = computed(() => current.value?.slots.includes(room.me.value.id))
-const playerName = (id: string | null) => props.content.tournament?.players.find(p => p.id === id)?.name ?? '…'
+const playerName = (id: string | null) => props.content.tournament ? scoringPlayers(props.content.tournament).find(p => p.id === id)?.name ?? '…' : '…'
 const scores = computed(() => props.content.tournament ? [...tournamentScores(props.content.tournament)]
   .sort((a, b) => b[1] - a[1]) : [])
 </script>
@@ -26,11 +27,12 @@ const scores = computed(() => props.content.tournament ? [...tournamentScores(pr
       <p v-else-if="!winner">Der Host erstellt das Turnier aus den Spielern der Lobby. Jeder Matchsieg bringt 1000 Punkte; Freilose geben keine Punkte.</p>
     </div>
     <slot />
+    <BettingPanel v-if="content.tournament" :tournament="content.tournament" />
     <TournamentBracket v-if="content.tournament" :tournament="content.tournament" :me-id="room.me.value.id" />
     <details v-if="content.tournament" class="scores">
       <summary>Spielpunkte im Turnier</summary>
       <ol><li v-for="[id, points] in scores" :key="id"><span>{{ playerName(id) }}</span><strong>{{ points }} Punkte</strong></li></ol>
-      <p>1000 pro Matchsieg · 0 für Freilose · kein Siegerbonus</p>
+      <p>1000 pro Matchsieg · 300 pro richtigem Zuschauertipp · 0 für Freilose · kein Siegerbonus</p>
     </details>
   </div>
 </template>

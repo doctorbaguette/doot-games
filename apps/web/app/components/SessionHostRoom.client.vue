@@ -10,30 +10,24 @@
  * engine's `room.host.nextGame`. Custom-flow games (their own Host + /x/ state) are
  * excluded, since nextGame only resets the engine, not their bespoke state.
  */
-import { type RelayValue, type RoomMeta, createClaspRelay } from '@doot-games/engine'
+import { createClaspRelay } from '@doot-games/engine'
 import { provideDootRoom, useDootRoom } from '@doot-games/engine/vue'
 import {
   GameHost,
-  buildAssignContent,
-  buildDeriveContent,
-  buildRevealSummary,
-  buildTimerFor,
-  gameAnswerKeys,
-  gameRounds,
-  getBlock,
   getPlugin,
   listPlugins,
-  redactGameConfig,
-  resolveComposition,
 } from '@doot-games/games'
-import type { GamePlugin, ScorePlayer, StandardResults } from '@doot-games/sdk'
+import type { BoardDefinition, GamePlugin, StandardResults } from '@doot-games/sdk'
 import { DootLogo, Stage } from '@doot-games/ui'
 import { computed, onMounted, onScopeDispose, reactive, ref, watch } from 'vue'
 import { readSessionProgress } from '../utils/sessionProgress'
+import { sessionPlacementPoints } from '../utils/sessionScoring'
+import { buildSessionGame } from '../utils/sessionGameAdapter'
 
 // `gameIds`: a saved playlist's lineup (from /host/playlist/[id]); when given, the
 // picker is skipped and the session starts on that lineup.
-const props = defineProps<{ gameIds?: string[] }>()
+const props = defineProps<{ gameIds?: string[]; boardPrototype?: boolean; boardDefinition?: BoardDefinition; boardSourceId?: string }>()
+const isBoard = computed(() => !!props.boardPrototype || !!props.boardDefinition)
 const runtime = useRuntimeConfig()
 const themeState = useState<string>('doot-theme', () => 'doot')
 const themeId = themeState.value
@@ -42,7 +36,7 @@ const themeId = themeState.value
 // room instead of stranding players on a regenerated code (see useHostSession). A saved
 // playlist gets its own context (a different playlist starts a fresh room); the ad-hoc
 // picker uses a stable context so it resumes on refresh.
-const sessionContext = props.gameIds?.length ? `pl:${props.gameIds.join(',')}` : 'session'
+const sessionContext = props.boardSourceId ? `birthday-board:${props.boardSourceId}` : props.boardPrototype ? 'birthday-board-prototype' : props.gameIds?.length ? `pl:${props.gameIds.join(',')}` : 'session'
 const { room: roomCode, token: hostToken } = useHostSession({ context: sessionContext })
 const relay = createClaspRelay(runtime.public.relayUrl as string, { name: 'doot-session-host' }, { assets: createEphemeralAssets(roomCode) })
 const room = useDootRoom({ relay, room: roomCode, role: 'host', hostToken, nameFilter: playerNameFilter })
@@ -50,9 +44,6 @@ const room = useDootRoom({ relay, room: roomCode, role: 'host', hostToken, nameF
 onScopeDispose(() => relay.close())
 provideDootRoom(room)
 watch(() => room.code.value, (c) => persistHostRoom(sessionContext, c))
-
-const getPlayers = (): ScorePlayer[] =>
-  room.runtime.recentPlayers().map((p) => ({ id: p.id, name: p.name, joinedAtIndex: p.joinedAtIndex, team: p.team }))
 
 /** The generic (non-custom-flow) flagship games a session can sequence. */
 const candidates = listPlugins()
@@ -77,38 +68,7 @@ const sessionBoard = computed(() =>
 /** Build a full LoadedGame for one plugin (config + the two-phase wiring). */
 function buildLoaded(plugin: GamePlugin) {
   const base = plugin.buildConfig ? plugin.buildConfig(roomCode) : plugin.defaultConfig
-  const config = resolveComposition(plugin, base, roomCode)
-  const meta: RoomMeta = {
-    pluginId: plugin.manifest.id,
-    pluginVersion: plugin.manifest.version,
-    title: config.title || plugin.manifest.name,
-    themeId,
-  }
-  return {
-    meta,
-    config: config as unknown as RelayValue,
-    publishConfig: redactGameConfig(plugin, config) as unknown as RelayValue,
-    rounds: gameRounds(plugin, config),
-    resumable: config.rounds.every(inst => {
-      const block = getBlock(plugin, inst.block)
-      return !block?.derive && !block?.assignContent && !inst.fromShares
-    }),
-    // Read-time scaling for derived judge galleries (mirrors HostRoom).
-    timerFor: buildTimerFor(plugin, config) as never,
-    answerKeys: gameAnswerKeys(plugin, config) as unknown as Record<number, RelayValue>,
-    deriveContent: buildDeriveContent(plugin, config, roomCode, getPlayers, (i) => room.answerKeyFor(i)) as never,
-    assignContent: buildAssignContent(plugin, config, roomCode, getPlayers, (i) => room.answerKeyFor(i)) as never,
-    revealSummary: buildRevealSummary(
-      plugin,
-      config,
-      getPlayers,
-      (i) => room.runtimeContentFor(i),
-      (i) => room.answerKeyFor(i),
-      // P4B: fold the crowd into the published reveal tally when the toggle is on, so the
-      // big screen + phones match the scored result in a session too (mirrors HostRoom).
-      (i) => (room.meta.value?.crowdCounts ? (room.audienceVotesFor(i) as Map<string, unknown>) : new Map()),
-    ) as never,
-  }
+  return buildSessionGame(plugin, base, room.runtime, themeId)
 }
 
 function toggle(id: string) {
@@ -129,7 +89,7 @@ function startSession() {
 const progressKey = `doot-session-progress:${roomCode}:${hostToken}`
 let restoredProgress = false
 try {
-  const saved = readSessionProgress(sessionStorage.getItem(progressKey), candidates.map(p => p.manifest.id))
+  const saved = isBoard.value ? null : readSessionProgress(sessionStorage.getItem(progressKey), candidates.map(p => p.manifest.id))
   if (saved) {
     picks.value = saved.picks
     idx.value = saved.index
@@ -155,6 +115,7 @@ watch(
 // A saved playlist: keep only games this session can sequence (known + generic), in
 // the saved order, and start straight away (skipping the picker).
 onMounted(() => {
+  if (isBoard.value) return
   if (restoredProgress) return
   const ids = (props.gameIds ?? []).filter((id) => candidates.some((c) => c.manifest.id === id))
   if (ids.length) {
@@ -185,12 +146,9 @@ async function saveLineup() {
  *  (only players who actually scored). Folded once per leg. */
 function foldResults() {
   const results = room.results.value as StandardResults | undefined
-  const lb = (results?.leaderboard ?? []).filter((e) => (e.score ?? 0) > 0).sort((a, b) => b.score - a.score)
-  lb.forEach((e, rank) => {
-    if (!e.id) return
-    const pts = rank === 0 ? 5 : rank === 1 ? 3 : rank === 2 ? 2 : 1
+  sessionPlacementPoints(results).forEach(e => {
     const cur = sessionScores.get(e.id) ?? { name: e.name, points: 0 }
-    sessionScores.set(e.id, { name: e.name, points: cur.points + pts })
+    sessionScores.set(e.id, { name: e.name, points: cur.points + e.points })
   })
 }
 
@@ -228,6 +186,11 @@ function newRoom() {
   resetHostSession(sessionContext)
   if (typeof window !== 'undefined') window.location.reload()
 }
+function newBoardShow() {
+  if (!canNewRoom.value || !window.confirm('Neue Gameshow mit dem aktuell gespeicherten Board starten? Du erhältst einen neuen Raumcode. Die bisherige Show und ihre Session-Punkte werden nicht weitergeführt; die gespeicherte Vorlage bleibt erhalten.')) return
+  resetHostSession(sessionContext)
+  window.location.reload()
+}
 </script>
 
 <template>
@@ -238,12 +201,14 @@ function newRoom() {
         <span v-if="idx >= 0 && !finished" class="chip">Game {{ idx + 1 }}/{{ picks.length }}</span>
         <span class="chip">{{ playerCount }} {{ playerCount === 1 ? 'player' : 'players' }}</span>
         <span class="code mono">{{ room.code.value }}</span>
-        <button v-if="canNewRoom" type="button" class="newroom" title="Start a fresh room with a new code" @click="newRoom">New room</button>
+        <button v-if="canNewRoom && !isBoard" type="button" class="newroom" title="Start a fresh room with a new code" @click="newRoom">New room</button>
+        <button v-if="canNewRoom && isBoard" type="button" class="newroom" @click="newBoardShow">Neue Gameshow starten</button>
       </div>
     </template>
 
     <!-- SETUP: pick the games -->
-    <div v-if="idx === -1" class="setup">
+    <BirthdayBoardSession v-if="isBoard" :host-token="hostToken" :theme-id="themeId" :definition="boardDefinition" :source-id="boardSourceId" />
+    <div v-else-if="idx === -1" class="setup">
       <h1>Build your session</h1>
       <p class="lead">Pick the games to play back to back. Everyone joins once and stays for the whole night.</p>
       <div class="picks" role="group" aria-label="Pick games">

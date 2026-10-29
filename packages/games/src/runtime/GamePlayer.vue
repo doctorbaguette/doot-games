@@ -14,7 +14,7 @@ import ReportButton from './ReportButton.vue'
 import { getBlock, ownMakeText } from './derive'
 import { canSubmitInput, inputNeedsRebuild } from './submit'
 
-const props = defineProps<{ plugin: GamePlugin }>()
+const props = defineProps<{ plugin: GamePlugin; sessionMode?: boolean }>()
 const room = injectDootRoom()
 
 // A game may ship a custom results view (e.g. a chain game's "unspool"); fall back
@@ -314,7 +314,7 @@ function reloadPage() {
         :order="config?.settings?.resultsOrder ?? []"
         compact
       />
-      <a class="btn btn-ghost btn-block" href="/">Back to start</a>
+      <a v-if="!sessionMode" class="btn btn-ghost btn-block" href="/">Back to start</a>
       <ReportButton
         class="results-report"
         :room-code="room.code.value"

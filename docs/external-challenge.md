@@ -44,6 +44,10 @@ entfernt Baum und Turnierpunkte. Anschließend kann mit der aktuellen Lobby neu
 ausgelost werden. Abbrechen verändert nichts.
 
 Jeder tatsächlich ausgespielte Sieg gibt 1000 Spielpunkte, eine Niederlage 0.
+Ein richtiger Zuschauertipp gibt zusätzlich 300 Spielpunkte; falsche und nicht
+abgegebene Tipps geben 0 Punkte. Duellteilnehmer dürfen nicht auf ihr eigenes
+Match tippen. Ausgeschiedene Spieler und zusätzliche angemeldete Lobbyspieler
+können bei allen anderen Matches weiterhin mitmachen.
 Freilose und der Turniersieg selbst geben keinen Bonus. Die normale Doot-Wertung
 addiert diese Punkte auch bei mehreren External-Challenge-Runden. Die bestehende
 Session-Wertung bleibt unverändert: Platzierungen der Spieler mit positiven
@@ -68,6 +72,40 @@ Spielpunkten bringen 5/3/2/1 Session-Punkte; Spielpunkte werden dort nicht addie
   Platzierungspunkte zusätzlich im `sessionStorage` derselben Host-Registerkarte,
   damit ein Refresh den Turnierablauf nicht vom laufenden Spiel trennt. Der Marker
   bereits gewerteter Spiele verhindert doppelte Session-Platzierungspunkte.
+
+## Zuschauerwetten mit vier Testspielern ausprobieren
+
+1. Den Devserver wie oben starten und External Challenge am Host-PC öffnen.
+2. Vier Spieler mit unterschiedlichen Namen über weitere Browserfenster/-tabs
+   oder Smartphones anmelden. Am Smartphone die Netzwerkadresse des PCs verwenden.
+3. Das Spiel starten und **Turnier erstellen** wählen. Vor der ersten Paarung
+   erhalten die beiden nicht beteiligten Spieler automatisch eine Wettansicht.
+4. Auf diesen beiden Smartphones auf unterschiedliche Duellteilnehmer tippen.
+   Einen Tipp ändern und auf die Anzeige **Dein gespeicherter Tipp** achten:
+   Sie zeigt die Übernahme durch den Host, nicht nur eine lokale Auswahl.
+5. Am Host **Duell starten** drücken. Die Tipps sind jetzt gesperrt; auch ein
+   Smartphone-Refresh öffnet sie nicht erneut. Ein erst nach dem Start beim Host
+   eintreffender Tipp zählt nicht, maßgeblich ist der vom Host gespeicherte Stand.
+6. Den Sieger bestätigen. Die Wettauswertung zeigt die Verteilung und die Namen
+   aller erfolgreichen Tipper. Diese erhalten je 300 Punkte; der Duellsieger 1000.
+   Unter **Spielpunkte im Turnier** steht die kombinierte Wertung.
+7. Die zweite Paarung spielen. Im Finale dürfen die beiden ausgeschiedenen
+   Spieler wieder tippen. Freilose öffnen keine Wettfenster.
+8. Nach einem Ergebnis den Sieger unter **Ergebnis korrigieren** ändern. Die
+   gesperrten Tipps dieses Matches bleiben bestehen und werden gegen den neuen
+   Sieger neu ausgewertet. Zurückgesetzte Folgematches verlieren auch ihre alten
+   Tipps und Wettpunkte und bekommen vor der Wiederholung ein neues Wettfenster.
+9. Host oder Smartphone vor bzw. während eines Duells aktualisieren: Innerhalb
+   der oben beschriebenen Wiederherstellungsgrenzen bleiben angenommene Tipps,
+   Sperre und Ergebnisse erhalten. Die Session-Platzierungswertung bleibt gleich.
+
+Technisch senden Smartphones nur einen Wunsch-Tipp über Doots vorhandene
+Spielkanäle. Der Host prüft Wettfenster, Spieler-ID, Teilnahmeberechtigung und
+Kontrahenten und übernimmt höchstens einen veränderbaren Tipp pro Spieler.
+Spieler können darüber keine Sieger oder Punktwerte festlegen. Gespeicherte
+Anfragen aus alten oder zurückgesetzten Wettfenstern werden verworfen. Die
+bereits dokumentierte Grenze der öffentlichen Relay-Authentifizierung gilt
+weiterhin; die Wettkanäle führen keine neue serverseitige Identitätsprüfung ein.
 
 ## Automatisierte Checks
 

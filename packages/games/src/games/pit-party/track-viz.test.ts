@@ -1,16 +1,18 @@
 /**
  * Map-authoring dev tool: bakes each map and dumps an SVG of the road geometry
- * (centerline, edges, barrier mask, obstacles, item boxes, checkpoints) to /tmp,
- * plus a min-turn-radius report per course. Open /tmp/pp-track-<id>.svg in a
+ * (centerline, edges, barrier mask, obstacles, item boxes, checkpoints) to the OS temp directory,
+ * plus a min-turn-radius report per course. Open pp-track-<id>.svg there in a
  * browser while tuning control points; the hard regression guards live in
  * logic.test.ts (this file just makes the geometry visible).
  */
 import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it } from 'vitest'
 import { MAPS, bakeMap } from './maps'
 
 describe('track viz dump', () => {
-  it('writes /tmp/pp-track-<id>.svg', () => {
+  it('writes pp-track-<id>.svg to the OS temp directory', () => {
     for (const m of MAPS) {
       const b = bakeMap(m.id, 'VIZ1')
       const pad = 30
@@ -66,7 +68,7 @@ describe('track viz dump', () => {
 ${barR.join('')}${barL.join('')}${obs}${boxes}${cps}${ctrl}
 <text x="${minX + 8}" y="${minZ + 16}" font-size="14" fill="#ffd23f">${m.name} (${m.id}) len=${b.length.toFixed(0)} roadW=${b.roadW}</text>
 </svg>`
-      writeFileSync(`/tmp/pp-track-${m.id}.svg`, svg)
+      writeFileSync(join(tmpdir(), `pp-track-${m.id}.svg`), svg)
       // curvature report: radius = ds / dHeading between successive samples
       let worst = Infinity
       let at = 0

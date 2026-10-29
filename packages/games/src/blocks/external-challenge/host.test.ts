@@ -6,10 +6,12 @@ import ChallengeHost from './ChallengeHost.vue'
 import ChallengePlayer from './ChallengePlayer.vue'
 import type { ExternalChallengeContent } from './block'
 import { bracket, champion, currentMatch, tournamentScores } from './tournament'
+import { betChannel } from './betting'
 
 interface Controls {
   create: () => void; start: () => void; confirm: () => void; finish: () => void
   requestCorrection: () => void; approve: () => void
+  receiveBet: (value: unknown, key: string) => void
   winner: string; correctionId: string; correctionWinner: string
   pending: { kind: 'reset' } | null; error: string
 }
@@ -47,6 +49,22 @@ async function mount(count = 4, view: Component = ChallengeHost, isHost = true) 
 }
 
 describe('Tournament host and phone views', () => {
+  it('accepts spectator requests only before start and scores the saved pick on confirmation', async () => {
+    const ui = await mount()
+    ui.controls.create(); ui.sync()
+    const match = currentMatch(ui.content.value.tournament!)!
+    const bettor = match.betting!.eligible[0]!
+    const key = betChannel(0, match.betting!.id, bettor.id)
+    ui.controls.receiveBet({ pickId: match.slots[0] }, key)
+    ui.sync()
+    expect(currentMatch(ui.content.value.tournament!)!.betting!.picks).toHaveLength(1)
+    ui.controls.start(); ui.sync()
+    ui.controls.receiveBet({ pickId: match.slots[1] }, key)
+    expect(currentMatch(ui.content.value.tournament!)!.betting!.picks[0]!.pickId).toBe(match.slots[0])
+    ui.controls.winner = match.slots[0]!
+    ui.controls.confirm(); ui.sync()
+    expect(tournamentScores(ui.content.value.tournament!).get(bettor.id)).toBe(300)
+  })
   it('shows an understandable odd-player error instead of dropping a participant', async () => {
     const ui = await mount(3)
     ui.controls.create()

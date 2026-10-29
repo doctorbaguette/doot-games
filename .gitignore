@@ -21,6 +21,16 @@ pnpm-debug.log*
 !.env.example
 .credentials/
 
+# local databases and their SQLite sidecars (never commit account/game data)
+*.sqlite
+*.sqlite3
+*.db
+*.db3
+*.sqlite-*
+*.sqlite3-*
+*.db-*
+*.db3-*
+
 # os / editor
 .DS_Store
 *.local

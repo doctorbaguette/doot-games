@@ -4,24 +4,25 @@
  * games and decks. Nothing about a live session is stored here, only the durable
  * lineup. Mirrors decks-repo.
  */
-import { z } from '@doot-games/sdk'
+import { boardDefinitionSchema, z, type BoardDefinition } from '@doot-games/sdk'
 import { isKnownPlugin } from '@doot-games/games/catalog'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, isNull } from 'drizzle-orm'
 import { type Visibility, playlists, useDb } from './db'
 import { authorsFor } from './users'
 
 export const playlistInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(300).optional(),
-  /** Ordered game ids; only known first-party games, 2-20 of them. */
+  /** Legacy ordered plugin IDs. Boards use their own typed cells, not this list. */
   games: z
     .array(z.string().trim().min(1))
-    .min(1)
     .max(20)
-    .refine((ids) => ids.every((id) => isKnownPlugin(id)), { message: 'Unknown game in the lineup.' }),
+    .refine((ids) => ids.every((id) => isKnownPlugin(id)), { message: 'Unknown game in the lineup.' }).default([]),
+  board: boardDefinitionSchema.optional(),
   visibility: z.enum(['private', 'unlisted', 'public']).optional(),
   remixable: z.boolean().optional(),
-})
+}).refine(p => p.board ? p.games.length === 0 : p.games.length > 0, { message: 'Choose either a board or a non-empty linear lineup.' })
+  .refine(p => !p.board || ((!p.visibility || p.visibility === 'private') && !p.remixable), { message: 'Boards are private in this version.' })
 export type PlaylistInput = z.infer<typeof playlistInputSchema>
 
 export interface SavedPlaylist {
@@ -30,6 +31,7 @@ export interface SavedPlaylist {
   name: string
   description: string | null
   games: string[]
+  board: BoardDefinition | null
   visibility: Visibility
   remixable: boolean
   createdAt: number
@@ -42,6 +44,7 @@ export interface SavedPlaylistSummary {
   description: string | null
   games: string[]
   gameCount: number
+  kind: 'board' | 'linear'
   visibility: Visibility
   remixable: boolean
   authorName: string | null
@@ -72,8 +75,9 @@ export async function createPlaylist(input: PlaylistInput, ownerId: string): Pro
     name: input.name,
     description: input.description?.length ? input.description : null,
     games: JSON.stringify(input.games),
-    visibility: input.visibility ?? 'private',
-    remixable: input.remixable ?? false,
+    boardConfig: input.board ? JSON.stringify(input.board) : null,
+    visibility: input.board ? 'private' : input.visibility ?? 'private',
+    remixable: input.board ? false : input.remixable ?? false,
     createdAt: now,
     updatedAt: now,
   })
@@ -86,11 +90,13 @@ export async function updatePlaylist(id: string, ownerId: string, input: Playlis
   const set: Record<string, unknown> = {
     name: input.name,
     games: JSON.stringify(input.games),
+    boardConfig: input.board ? JSON.stringify(input.board) : null,
     updatedAt: Date.now(),
   }
   if (input.visibility !== undefined) set.visibility = input.visibility
   if (input.remixable !== undefined) set.remixable = input.remixable
   if (input.description !== undefined) set.description = input.description.length ? input.description : null
+  if (input.board) { set.visibility = 'private'; set.remixable = false }
   const db = await useDb()
   const res = await db.update(playlists).set(set).where(and(eq(playlists.id, id), eq(playlists.ownerId, ownerId)))
   return (res.rowsAffected ?? 0) > 0
@@ -113,6 +119,8 @@ export async function getPlaylist(id: string, requesterId: string | null): Promi
   const row = (await db.select().from(playlists).where(eq(playlists.id, id)).limit(1))[0]
   if (!row) return null
   const visibility = row.visibility as Visibility
+  // Never expose private board targets through an old/unlisted playlist row.
+  if (row.boardConfig && (!row.ownerId || row.ownerId !== requesterId)) return null
   if (visibility === 'private' && (!row.ownerId || row.ownerId !== requesterId)) return null
   return {
     id: row.id,
@@ -120,6 +128,7 @@ export async function getPlaylist(id: string, requesterId: string | null): Promi
     name: row.name,
     description: row.description,
     games: gamesFrom(row.games),
+    board: row.boardConfig ? boardDefinitionSchema.parse(JSON.parse(row.boardConfig)) : null,
     visibility,
     remixable: row.remixable,
     createdAt: row.createdAt,
@@ -133,6 +142,7 @@ const SUMMARY_COLUMNS = {
   name: playlists.name,
   description: playlists.description,
   games: playlists.games,
+  boardConfig: playlists.boardConfig,
   visibility: playlists.visibility,
   remixable: playlists.remixable,
   createdAt: playlists.createdAt,
@@ -143,6 +153,7 @@ interface SummaryRow {
   name: string
   description: string | null
   games: string
+  boardConfig: string | null
   visibility: string
   remixable: boolean
   createdAt: number
@@ -153,12 +164,17 @@ async function toSummaries(rows: SummaryRow[]): Promise<SavedPlaylistSummary[]> 
   return rows.map((r) => {
     const author = r.ownerId ? authors.get(r.ownerId) : undefined
     const games = gamesFrom(r.games)
+    let board: BoardDefinition | null = null
+    if (r.boardConfig) {
+      try { board = boardDefinitionSchema.parse(JSON.parse(r.boardConfig)) } catch { /* Invalid rows are not playable boards. */ }
+    }
     return {
       id: r.id,
       name: r.name,
       description: r.description,
       games,
-      gameCount: games.length,
+      gameCount: board ? board.categories.reduce((n, c) => n + c.cells.length, 0) : games.length,
+      kind: r.boardConfig ? 'board' : 'linear',
       visibility: r.visibility as Visibility,
       remixable: r.remixable,
       authorName: author?.handle ? null : (author?.name ?? null),
@@ -186,7 +202,7 @@ export async function listPublicPlaylists(limit = 200): Promise<SavedPlaylistSum
   const rows = await db
     .select(SUMMARY_COLUMNS)
     .from(playlists)
-    .where(eq(playlists.visibility, 'public'))
+    .where(and(eq(playlists.visibility, 'public'), isNull(playlists.boardConfig)))
     .orderBy(desc(playlists.createdAt))
     .limit(limit)
   return toSummaries(rows as SummaryRow[])

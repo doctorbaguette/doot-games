@@ -16,6 +16,8 @@ const runtime = useRuntimeConfig()
 const relay = createClaspRelay(runtime.public.relayUrl as string, { name: `doot-player:${props.name}` }, { assets: createEphemeralAssets(props.room) })
 const room = useDootRoom({ relay, room: props.room, role: 'player', name: props.name, nameFilter: playerNameFilter })
 provideDootRoom(room)
+const birthdayBoard = useBirthdayBoard(room)
+const boardRunReady = computed(() => !!birthdayBoard.value?.active && room.meta.value?.sessionRunId === birthdayBoard.value.active.runId)
 
 // Adopt the host's per-game theme once meta arrives; the app's global
 // ThemeProvider (driven by this state) then restyles the play surface.
@@ -76,7 +78,10 @@ onScopeDispose(() => {
         {{ room.connected.value ? 'live' : '…' }}
       </span>
     </template>
-    <component :is="PlayerView" v-if="plugin" :plugin="plugin" />
+    <BirthdayBoard v-if="birthdayBoard && !birthdayBoard.active" :state="birthdayBoard" />
+    <SessionGameSurface v-else-if="birthdayBoard?.active && plugin && boardRunReady" :key="birthdayBoard.active.runId" :plugin="plugin" :view="PlayerView" :execution-id="birthdayBoard.active.runId" />
+    <div v-else-if="birthdayBoard?.active" class="loading">Der Host bereitet das Feld vor …</div>
+    <component :is="PlayerView" v-else-if="plugin" :plugin="plugin" />
     <div v-else-if="notFound" class="loading deadroom">
       <h2>Can't find room {{ code }}</h2>
       <p>Double-check the code with the host, or the room may have ended.</p>

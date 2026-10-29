@@ -1,11 +1,13 @@
 import { z } from '@doot-games/sdk'
 import { scoreExternalDuel } from './score'
+import { BET_POINTS, betSummary, bettingPlayerSchema, bettingSchema, newBettingWindowId, parseBetRequest, validBetting } from './betting'
 
-const playerSchema = z.object({ id: z.string().min(1), name: z.string() })
+const playerSchema = bettingPlayerSchema
 const matchSchema = z.object({
   id: z.string(),
   status: z.enum(['pending', 'running', 'completed', 'bye']),
   winnerId: z.string().nullable(),
+  betting: bettingSchema.optional(),
 })
 const stateSchema = z.object({
   version: z.literal(1),
@@ -52,12 +54,17 @@ function validState(t: Tournament): boolean {
   if (ids.size !== t.players.length || occupied.length !== ids.size || new Set(occupied).size !== ids.size
     || occupied.some(id => !ids.has(id))) return false
   const views = bracket(t).flat()
+  const windowIds = new Set<string>()
   let running = 0
   for (let i = 0; i < views.length; i++) {
     const m = views[i]!
     if (m.id !== `r${m.round}-m${m.position}`) return false
     const [a, b] = m.slots
     const bye = m.round === 0 && (!a || !b)
+    if (m.betting) {
+      if (bye || !a || !b || windowIds.has(m.betting.id) || !validBetting(m.betting, m.slots)) return false
+      windowIds.add(m.betting.id)
+    }
     if (bye) {
       if ((!a && !b) || m.status !== 'bye' || m.winnerId !== (a ?? b)) return false
     } else if (m.status === 'bye') return false
@@ -117,6 +124,43 @@ export function currentMatch(t: Tournament): MatchView | undefined {
     ?? matches.find(m => m.status === 'pending' && m.slots.every(Boolean))
 }
 
+/** Open only the next regular match. The draw stays fixed; new lobby spectators
+ * may join its betting window without entering the knockout bracket. */
+export function openBetting(t: Tournament, lobby: TournamentPlayer[], newId: () => string = newBettingWindowId): Tournament {
+  const m = currentMatch(t)
+  if (!m || m.status !== 'pending') return t
+  const eligible = new Map((m.betting?.eligible ?? []).map(p => [p.id, p]))
+  for (const p of [...t.players, ...lobby]) {
+    if (!m.slots.includes(p.id) && !eligible.has(p.id)) eligible.set(p.id, { id: p.id, name: p.name })
+  }
+  if (m.betting && eligible.size === m.betting.eligible.length) return t
+  const next = copy(t)
+  next.matches.find(match => match.id === m.id)!.betting = {
+    id: m.betting?.id ?? newId(), eligible: [...eligible.values()], picks: m.betting?.picks ?? [],
+  }
+  return next
+}
+
+/** Host acceptance boundary. A running match never reads mutable phone input. */
+export function recordBet(t: Tournament, windowId: string, playerId: string, pickId: string): Tournament {
+  const m = currentMatch(t)
+  if (!m || m.status !== 'pending' || !m.betting || m.betting.id !== windowId
+    || m.slots.includes(playerId) || !m.slots.includes(pickId)
+    || !m.betting.eligible.some(p => p.id === playerId)) return t
+  if (m.betting.picks.some(p => p.playerId === playerId && p.pickId === pickId)) return t
+  const next = copy(t)
+  next.matches.find(match => match.id === m.id)!.betting = {
+    ...m.betting,
+    picks: [...m.betting.picks.filter(p => p.playerId !== playerId), { playerId, pickId }],
+  }
+  return next
+}
+
+export function acceptBetRequest(t: Tournament, round: number, key: string, value: unknown): Tournament {
+  const request = parseBetRequest(round, key, value)
+  return request ? recordBet(t, request.windowId, request.playerId, request.pickId) : t
+}
+
 export function champion(t: Tournament): TournamentPlayer | undefined {
   const final = t.matches[t.matches.length - 1]
   return final?.status === 'completed' ? t.players.find(p => p.id === final.winnerId) : undefined
@@ -164,21 +208,33 @@ export function correctWinner(t: Tournament, id: string, winnerId: string, allow
   const next = copy(t)
   for (const match of next.matches) {
     if (match.id === id) match.winnerId = winnerId
-    else if (dependents.some(d => d.id === match.id)) Object.assign(match, { status: 'pending', winnerId: null })
+    else if (dependents.some(d => d.id === match.id)) {
+      Object.assign(match, { status: 'pending', winnerId: null })
+      delete match.betting
+    }
   }
   return next
 }
 
 /** Recompute from unique confirmed matches: corrections never leave stale points. */
 export function tournamentScores(t: Tournament): Map<string, number> {
-  const totals = new Map(t.players.map(p => [p.id, 0]))
+  const totals = new Map(scoringPlayers(t).map(p => [p.id, 0]))
   for (const m of bracket(t).flat()) {
     if (m.status !== 'completed' || !m.winnerId) continue
     for (const [id, score] of scoreExternalDuel(m.slots[0]!, m.slots[1]!, m.winnerId)) {
       totals.set(id, totals.get(id)! + score)
     }
+    for (const player of betSummary(m).successful) totals.set(player.id, totals.get(player.id)! + BET_POINTS)
   }
   return totals
+}
+
+export function scoringPlayers(t: Tournament): TournamentPlayer[] {
+  const players = new Map(t.players.map(p => [p.id, p]))
+  for (const match of t.matches) {
+    for (const p of match.betting?.eligible ?? []) if (!players.has(p.id)) players.set(p.id, p)
+  }
+  return [...players.values()]
 }
 
 export function roundName(matchCount: number): string {

@@ -412,6 +412,25 @@ describe('RoomRuntime player cap (A8)', () => {
 })
 
 describe('RoomRuntime sessions (nextGame)', () => {
+  it('keeps a late guest eligible from round zero in the next identified session run', async () => {
+    const hub = new FakeHub(), now = () => 0
+    const host = makeHost(hub, now)
+    await host.connect()
+    host.loadGame({ ...GAME, meta: { ...GAME.meta, sessionRunId: 'first' } })
+    host.start(); host.openVoting(); host.lock(); host.reveal(); host.next()
+    host.openVoting(); host.lock()
+    const late = makePlayer(hub, 'Late', now)
+    await late.connect(); await flush()
+    const id = late.getSnapshot().me.id
+    expect(late.joinedAtIndex).toBe(2)
+    host.nextGame({ ...GAME, meta: { ...GAME.meta, sessionRunId: 'second' } })
+    await flush()
+    expect(late.getSnapshot().me.id).toBe(id)
+    expect(late.joinedAtIndex).toBe(0)
+    expect(host.recentPlayers().find(p => p.id === id)?.joinedAtIndex).toBe(0)
+    late.submit({ choice: 1 })
+    expect(host.inputsFor(0).get(id)).toEqual({ choice: 1 })
+  })
   const GAME2 = {
     meta: { pluginId: 'guess', pluginVersion: '0.0.0', title: 'Game 2', themeId: 'doot' },
     config: { title: 'Game 2', rounds: [{}] } as RelayValue,

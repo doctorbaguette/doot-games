@@ -10,6 +10,7 @@ interface PlaylistSummary {
   games: string[]
   gameCount: number
   visibility: string
+  kind: 'board' | 'linear'
 }
 const { data, refresh } = await useFetch<{ playlists: PlaylistSummary[] }>('/api/playlists?scope=mine')
 const mine = computed(() => data.value?.playlists ?? [])
@@ -24,21 +25,23 @@ async function remove(id: string) {
   <main class="wrap pls">
     <header class="pls-head">
       <div>
-        <h1>Session lineups</h1>
-        <p class="lead">Save a night of games and host it back to back in one room.</p>
+        <h1>Meine Gameshows & Playlists</h1>
+        <p class="lead">Boards und Spielabende speichern, bearbeiten und später wieder öffnen.</p>
       </div>
       <NuxtLink to="/host/session" class="btn btn-primary">Build a session</NuxtLink>
+      <NuxtLink to="/boards/new" class="btn btn-primary">Gameshow-Board erstellen</NuxtLink>
     </header>
 
     <ul v-if="mine.length" class="pls-list">
       <li v-for="p in mine" :key="p.id" class="pls-card panel">
         <div class="pls-info">
           <h3>{{ p.name }}</h3>
-          <p class="pls-meta">{{ p.gameCount }} {{ p.gameCount === 1 ? 'game' : 'games' }} · {{ p.visibility }}</p>
+          <p class="pls-meta">{{ p.gameCount }} {{ p.kind === 'board' ? 'Felder' : p.gameCount === 1 ? 'game' : 'games' }} · {{ p.visibility }}</p>
           <p class="pls-games">{{ p.games.join(' · ') }}</p>
         </div>
         <div class="pls-actions">
           <a :href="`/host/playlist/${p.id}`" class="btn btn-primary">Host</a>
+          <NuxtLink v-if="p.kind === 'board'" :to="`/boards/${p.id}`" class="btn btn-ghost">Board bearbeiten</NuxtLink>
           <button type="button" class="btn btn-ghost" @click="remove(p.id)">Delete</button>
         </div>
       </li>
@@ -46,6 +49,7 @@ async function remove(id: string) {
     <div v-else class="pls-empty panel">
       <p>You haven't saved any lineups yet.</p>
       <NuxtLink to="/host/session" class="btn btn-primary">Build your first session</NuxtLink>
+      <NuxtLink to="/boards/new" class="btn btn-primary">Gameshow-Board erstellen</NuxtLink>
     </div>
   </main>
 </template>

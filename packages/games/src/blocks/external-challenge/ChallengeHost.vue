@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { injectDootRoom } from '@doot-games/engine/vue'
 import type { RelayValue } from '@doot-games/engine'
 import type { ExternalChallengeContent } from './block'
 import ChallengePlayer from './ChallengePlayer.vue'
-import { bracket, champion, confirmMatch, correctWinner, createTournament, currentMatch, dependentMatches, roundName, startMatch, type Tournament } from './tournament'
+import { acceptBetRequest, bracket, champion, confirmMatch, correctWinner, createTournament, currentMatch, dependentMatches, openBetting, roundName, startMatch, type Tournament } from './tournament'
+import { betChannel } from './betting'
 const props = defineProps<{ content: ExternalChallengeContent }>()
 const room = injectDootRoom()
 const winner = ref('')
@@ -18,7 +19,7 @@ const current = computed(() => tournament.value ? currentMatch(tournament.value)
 const completed = computed(() => tournament.value ? bracket(tournament.value).flat().filter(m => m.status === 'completed') : [])
 const correction = computed(() => completed.value.find(m => m.id === correctionId.value))
 const editable = computed(() => room.isHost.value && room.phase.value === 'active' && ['ready', 'open'].includes(room.round.value.state))
-// There are no phone submissions: everyone present when drawing may participate,
+// There are no standard round submissions: everyone present when drawing may participate,
 // including people who joined after the Doot round was opened.
 const available = computed(() => room.players.value)
 const playerName = (id: string | null) => tournament.value?.players.find(p => p.id === id)?.name ?? '…'
@@ -31,8 +32,28 @@ function latest(): ExternalChallengeContent {
 }
 function publish(t: Tournament | undefined) {
   const { tournament: old, duel: legacy, ...content } = latest()
-  room.host.setRoundContent({ ...content, ...(t ? { tournament: t } : {}) } as unknown as RelayValue)
+  room.host.setRoundContent({ ...content, ...(t ? { tournament: openBetting(t, available.value) } : {}) } as unknown as RelayValue)
 }
+
+function receiveBet(value: unknown, key: string) {
+  if (!editable.value) return
+  const t = latest().tournament
+  if (!t) return
+  const next = acceptBetRequest(t, room.round.value.index, key, value)
+  if (next !== t) publish(next)
+}
+let unsubscribeBets: (() => void) | undefined
+onMounted(() => {
+  if (room.isHost.value) unsubscribeBets = room.onExtra(betChannel(room.round.value.index, '*', '*'), receiveBet)
+})
+onUnmounted(() => unsubscribeBets?.())
+watch([() => current.value?.id, () => current.value?.status, available, editable], () => {
+  if (!editable.value) return
+  const t = latest().tournament
+  if (!t) return
+  const next = openBetting(t, available.value)
+  if (next !== t) publish(next)
+}, { immediate: true })
 function action(fn: () => void) {
   if (!editable.value || busy.value) return
   busy.value = true

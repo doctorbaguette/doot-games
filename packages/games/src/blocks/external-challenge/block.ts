@@ -2,7 +2,7 @@ import { defineBlock, z } from '@doot-games/sdk'
 import ChallengeHost from './ChallengeHost.vue'
 import ChallengePlayer from './ChallengePlayer.vue'
 import { scoreExternalDuel } from './score'
-import { tournamentSchema, tournamentScores, type Tournament } from './tournament'
+import { scoringPlayers, tournamentSchema, tournamentScores, type Tournament } from './tournament'
 
 export const duelSchema = z.object({
   playerA: z.string().min(1),
@@ -26,7 +26,7 @@ export type ExternalChallengeContent = z.infer<typeof externalChallengeContentSc
 export const externalChallengeBlock = defineBlock<ExternalChallengeContent, Record<string, never>>({
   kind: 'external-challenge',
   name: 'External Challenge',
-  scoring: 'Jeder bestätigte Matchsieg bringt 1000 Punkte. Freilose geben keine Punkte.',
+  scoring: 'Jeder Matchsieg bringt 1000 Punkte, ein richtiger Zuschauertipp 300 Punkte. Freilose geben keine Punkte.',
   solo: true,
   contentSchema: externalChallengeContentSchema,
   defaultContent: () => externalChallengeContentSchema.parse({}),
@@ -42,8 +42,9 @@ export const externalChallengeBlock = defineBlock<ExternalChallengeContent, Reco
       if (content.tournament !== undefined) {
         const parsed = tournamentSchema.safeParse(content.tournament)
         if (!parsed.success) continue
+        const roster = new Map(scoringPlayers(parsed.data).map(p => [p.id, p.name]))
         for (const [id, score] of tournamentScores(parsed.data)) {
-          const name = parsed.data.players.find(p => p.id === id)!.name
+          const name = roster.get(id)!
           const previous = totals.get(id)
           totals.set(id, { id, name, score: (previous?.score ?? 0) + score })
         }

@@ -13,6 +13,7 @@ import { dirname } from 'node:path'
 import { type Client, createClient } from '@libsql/client'
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql'
 import { integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { ensurePlaylistBoardColumn } from './playlist-board-migration'
 
 // Accounts/sessions are owned by better-auth (its own tables); this store holds
 // only game definitions. See server/utils/auth.ts.
@@ -89,6 +90,8 @@ export const playlists = sqliteTable('playlists', {
   description: text('description'),
   /** JSON-serialized string[] of game ids, in play order. */
   games: text('games').notNull(),
+  /** Optional versioned BoardDefinition; null preserves legacy linear playlists. */
+  boardConfig: text('board_config'),
   visibility: text('visibility').notNull().default('private'),
   remixable: integer('remixable', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at').notNull(),
@@ -244,6 +247,7 @@ async function ensureSchema(c: Client): Promise<void> {
     )
   `)
   await c.execute('CREATE INDEX IF NOT EXISTS playlists_owner_idx ON playlists(owner_id)')
+  await ensurePlaylistBoardColumn(c)
   await c.execute('CREATE INDEX IF NOT EXISTS playlists_visibility_idx ON playlists(visibility)')
   // Post-game content reports (anonymous, filed from the results screen).
   await c.execute(`

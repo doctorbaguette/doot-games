@@ -753,7 +753,12 @@ export class RoomRuntime {
         this.emit()
       })
       on(addr.meta(r), (v) => {
+        const previousRun = this.meta?.sessionRunId
         this.meta = v as unknown as RoomMeta
+        if (this.me.role === 'player' && this.profilePublished && previousRun !== this.meta?.sessionRunId && this.meta?.sessionRunId) {
+          this.myJoinedAtIndex = 0
+          this.publishProfile(0)
+        }
         this.emit()
       })
       on(addr.config(r), (v) => {
@@ -1696,6 +1701,17 @@ export class RoomRuntime {
     this.assertHost()
     // Fail before wiping the previous game if the next one is too large to broadcast.
     this.assertConfigBroadcastable(game.publishConfig ?? game.config)
+    // Board runs reuse round index zero. A late join point from the previous
+    // game must not exclude an existing guest from the new field.
+    if (game.meta.sessionRunId && game.meta.sessionRunId !== this.meta?.sessionRunId) {
+      for (const [pid, player] of this.playersMap) {
+        if (player.joinedAtIndex === 0) continue
+        this.playersMap.set(pid, { ...player, joinedAtIndex: 0 })
+        this.publish(addr.playerProfile(this.room, pid), { name: player.name, joinedAtIndex: 0 })
+      }
+      this.rosterVersion++
+      this.maybePublishRoster()
+    }
     const prevRounds = this.game?.rounds.length ?? 0
     // Clear only what the previous game actually WROTE. The old form published a null
     // for every (round x player) pair, which is R*(3+2N) frames in one synchronous
