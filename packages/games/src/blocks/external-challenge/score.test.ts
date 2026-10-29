@@ -22,4 +22,14 @@ describe('External Challenge scoring', () => {
       scoreExternalDuel('alice', 'bob', 'charlie'),
     ).toThrow()
   })
+
+  it.each([['alice', 'alice'], ['', 'bob'], ['alice', '']])(
+    'rejects invalid participant IDs (%s, %s)', (a, b) => {
+      expect(() => scoreExternalDuel(a, b, a)).toThrow()
+    },
+  )
+
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid points (%s)', points => {
+    expect(() => scoreExternalDuel('alice', 'bob', 'alice', points)).toThrow()
+  })
 })

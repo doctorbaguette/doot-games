@@ -114,6 +114,41 @@ const GAME = {
 }
 
 describe('RoomRuntime host actions', () => {
+  it('syncs host-controlled round content to phones and freezes it on lock', async () => {
+    const hub = new FakeHub()
+    const host = makeHost(hub, () => 0)
+    const player = makePlayer(hub, 'Alice', () => 0)
+    await host.connect()
+    await player.connect()
+    host.loadGame(GAME)
+    expect(() => host.setRoundContent({ title: 'Too early' })).toThrow()
+    host.start()
+    const selected = { title: 'Duel', duel: { playerA: 'a', playerB: 'b', winnerId: null, confirmed: false } }
+    host.setRoundContent(selected)
+    await flush()
+    expect(player.runtimeContentFor(0)).toEqual(selected)
+    expect(() => player.setRoundContent(selected)).toThrow()
+    host.openVoting()
+    const confirmed = { ...selected, duel: { ...selected.duel, winnerId: 'a', confirmed: true } }
+    host.setRoundContent(confirmed)
+    host.lock()
+    expect(() => host.setRoundContent(selected)).toThrow()
+    host.reveal()
+    await flush()
+    expect(player.runtimeContentFor(0)).toEqual(confirmed)
+    expect(() => host.setRoundContent(selected)).toThrow()
+    host.next()
+    expect(host.runtimeContentFor(0)).toEqual(confirmed)
+    expect(host.runtimeContentFor(1)).toBeUndefined()
+    host.openVoting()
+    host.lock()
+    host.reveal()
+    await host.finish({ leaderboard: [] })
+    host.nextGame(GAME)
+    expect(host.runtimeContentFor(0)).toBeUndefined()
+    expect(player.runtimeContentFor(0)).toBeUndefined()
+  })
+
   it('publishes meta and holds config during the lobby (before start)', async () => {
     const hub = new FakeHub()
     const host = makeHost(hub, () => 0)
@@ -1325,6 +1360,35 @@ describe('host reload mid-game recovery', () => {
     await p
   }
 
+  it('restores all public round content and final results after a host refresh', async () => {
+    const hub = new FakeHub()
+    const now = () => 1000
+    const game = { ...GAME, resumable: true }
+    const host = makeTokenHost(hub, now, 'tournament-host')
+    await host.connect()
+    host.loadGame(game)
+    host.start()
+    host.setRoundContent({ tournament: { finalWinner: 'a' } })
+    host.openVoting()
+    host.lock()
+    host.reveal()
+    host.next()
+    host.setRoundContent({ tournament: { finalWinner: 'b' } })
+    host.openVoting()
+    host.lock()
+    host.reveal()
+    const results = { leaderboard: [{ id: 'a', name: 'Alice', score: 1000 }] }
+    await host.finish(results)
+    host.dispose()
+    const restored = makeTokenHost(hub, now, 'tournament-host')
+    await connectThenLoad(restored, game)
+    expect(restored.getSnapshot().phase).toBe('results')
+    expect(restored.getSnapshot().results).toEqual(results)
+    expect(restored.runtimeContentFor(0)).toEqual({ tournament: { finalWinner: 'a' } })
+    expect(restored.runtimeContentFor(1)).toEqual({ tournament: { finalWinner: 'b' } })
+    expect(() => restored.setRoundContent({})).toThrow()
+  })
+
   it('RESUMES a resumable game mid-round instead of resetting to the lobby', async () => {
     const hub = new FakeHub()
     const now = () => 1_000
@@ -1335,6 +1399,8 @@ describe('host reload mid-game recovery', () => {
     host1.loadGame(game)
     host1.start()
     host1.openVoting() // round 0 is now OPEN
+    const tournament = { title: 'Tournament', tournament: { seeds: ['a', 'b'], matches: [{ winnerId: null, status: 'running' }] } }
+    host1.setRoundContent(tournament)
     expect(hub.store.get(addr.phase('ABCD'))).toBe('active')
     expect(hub.store.get(addr.roundState('ABCD'))).toBe('open')
     host1.dispose()
@@ -1346,6 +1412,14 @@ describe('host reload mid-game recovery', () => {
     expect(snap.phase).toBe('active') // did NOT reset to lobby
     expect(snap.round.index).toBe(0)
     expect(snap.round.state).toBe('open')
+    expect(host2.runtimeContentFor(0)).toEqual(tournament)
+    const player = makePlayer(hub, 'Refresh player', now)
+    await player.connect()
+    await flush()
+    expect(player.runtimeContentFor(0)).toEqual(tournament)
+    expect(() => player.setRoundContent({ winnerId: 'forged' })).toThrow()
+    player.submit({ winnerId: 'forged' })
+    expect(host2.runtimeContentFor(0)).toEqual(tournament)
     // The relay's phase was never overwritten with 'lobby' (players stay in-game).
     expect(hub.store.get(addr.phase('ABCD'))).toBe('active')
   })

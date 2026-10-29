@@ -2,7 +2,9 @@
  * The first-party plugin registry. Discrete game types lead; VoteBox is the
  * composite. All are block compositions, no game depends on another.
  */
+
 import type { GamePlugin } from '@doot-games/sdk'
+import { externalChallenge } from './games/external-challenge'
 import { backronym } from './games/backronym'
 import { ballpark } from './games/ballpark'
 import { bingo } from './games/bingo'
@@ -78,6 +80,7 @@ export const builtinPlugins: GamePlugin[] = [
   wavelength,
   bingo,
   callIt,
+  externalChallenge,
   retroArcade,
   pitParty,
   custom,

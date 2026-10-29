@@ -136,6 +136,7 @@ export function useDootRoom(options: UseDootRoomOptions) {
     host: {
       loadGame: (game: Parameters<RoomRuntime['loadGame']>[0]) => runtime.loadGame(game),
       start: () => runtime.start(),
+      setRoundContent: (content: Parameters<RoomRuntime['setRoundContent']>[0]) => runtime.setRoundContent(content),
       openVoting: () => runtime.openVoting(),
       lock: () => runtime.lock(),
       reveal: () => runtime.reveal(),

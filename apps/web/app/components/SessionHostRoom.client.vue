@@ -20,6 +20,7 @@ import {
   buildTimerFor,
   gameAnswerKeys,
   gameRounds,
+  getBlock,
   getPlugin,
   listPlugins,
   redactGameConfig,
@@ -28,6 +29,7 @@ import {
 import type { GamePlugin, ScorePlayer, StandardResults } from '@doot-games/sdk'
 import { DootLogo, Stage } from '@doot-games/ui'
 import { computed, onMounted, onScopeDispose, reactive, ref, watch } from 'vue'
+import { readSessionProgress } from '../utils/sessionProgress'
 
 // `gameIds`: a saved playlist's lineup (from /host/playlist/[id]); when given, the
 // picker is skipped and the session starts on that lineup.
@@ -87,6 +89,10 @@ function buildLoaded(plugin: GamePlugin) {
     config: config as unknown as RelayValue,
     publishConfig: redactGameConfig(plugin, config) as unknown as RelayValue,
     rounds: gameRounds(plugin, config),
+    resumable: config.rounds.every(inst => {
+      const block = getBlock(plugin, inst.block)
+      return !block?.derive && !block?.assignContent && !inst.fromShares
+    }),
     // Read-time scaling for derived judge galleries (mirrors HostRoom).
     timerFor: buildTimerFor(plugin, config) as never,
     answerKeys: gameAnswerKeys(plugin, config) as unknown as Record<number, RelayValue>,
@@ -118,9 +124,38 @@ function startSession() {
   if (plugin) room.host.loadGame(buildLoaded(plugin) as never)
 }
 
+// Restore synchronously during setup, before connect() reaches the engine's
+// resume step. Scope to this tab's existing room identity, not just the lineup.
+const progressKey = `doot-session-progress:${roomCode}:${hostToken}`
+let restoredProgress = false
+try {
+  const saved = readSessionProgress(sessionStorage.getItem(progressKey), candidates.map(p => p.manifest.id))
+  if (saved) {
+    picks.value = saved.picks
+    idx.value = saved.index
+    captured.value = saved.captured
+    finished.value = saved.finished
+    for (const [id, score] of saved.scores) sessionScores.set(id, score)
+    const plugin = currentPlugin.value
+    if (plugin) {
+      room.host.loadGame(buildLoaded(plugin) as never)
+      restoredProgress = true
+    }
+  }
+} catch { /* Storage may be unavailable in private browser modes. */ }
+watch(
+  () => ({ version: 1, picks: picks.value, index: idx.value, captured: captured.value, finished: finished.value, scores: [...sessionScores] }),
+  value => {
+    if (value.index < 0) return
+    try { sessionStorage.setItem(progressKey, JSON.stringify(value)) } catch { /* Optional tab recovery. */ }
+  },
+  { deep: true },
+)
+
 // A saved playlist: keep only games this session can sequence (known + generic), in
 // the saved order, and start straight away (skipping the picker).
 onMounted(() => {
+  if (restoredProgress) return
   const ids = (props.gameIds ?? []).filter((id) => candidates.some((c) => c.manifest.id === id))
   if (ids.length) {
     picks.value = ids

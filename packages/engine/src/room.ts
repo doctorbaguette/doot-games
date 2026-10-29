@@ -667,10 +667,9 @@ export class RoomRuntime {
       get(addr.roundState(this.room)),
       get(addr.roundDeadline(this.room)),
     ])
-    // Only resume an ACTIVE (mid-round) game. 'lobby'/absent means a fresh start;
-    // 'results' means the game ended (and the host doesn't retain its own results
-    // summary), so a reload there just resets to the lobby as before.
-    if (phase !== 'active') return false
+    // Lobby/absent means a fresh start. A completed resumable game can restore
+    // its public summary too, so a refresh does not discard a tournament result.
+    if (phase !== 'active' && phase !== 'results') return false
     // Don't resume a STALE room. The relay keeps a room's state for hours, so if the
     // previous host stopped its heartbeat a while ago this 'active' state is leftover;
     // reusing the same code should start fresh, not restore it (the "reused a room and
@@ -689,6 +688,18 @@ export class RoomRuntime {
     // The freshly loaded config must actually contain this round (a guard against
     // a stale/mismatched retained pointer); else fall back to a clean lobby.
     if (index < 0 || index >= (this.game.rounds.length || 0)) return false
+    if (phase === 'results') {
+      const results = await get(addr.resultsSummary(this.room))
+      if (results == null) return false
+      this.results = results
+    }
+    // Hosts do not subscribe to their own content writes. Restore public runtime
+    // content explicitly on reload (e.g. a host-driven tournament's fixed draw).
+    // Read all rounds so scoring also retains earlier host-controlled results.
+    const contents = await Promise.all(this.game.rounds.map((_, i) => get(addr.roundContent(this.room, i))))
+    contents.forEach((content, i) => {
+      if (content != null) this.runtimeContent.set(i, content)
+    })
     this.state = {
       phase: phase as Phase,
       round: {
@@ -1569,6 +1580,18 @@ export class RoomRuntime {
       // Mark this as an assigned (hidden-role) answer so reveal() keeps it host-side.
       this.assignedRounds.add(index)
     }
+    this.emit()
+  }
+
+  /** Update public content for the current custom-flow round. Frozen once locked. */
+  setRoundContent(content: RelayValue): void {
+    this.assertHost()
+    if (this.state.phase !== 'active' || !['ready', 'open'].includes(this.state.round.state)) {
+      throw new Error('Round content can only change before locking an active round.')
+    }
+    const index = this.state.round.index
+    this.runtimeContent.set(index, content)
+    this.publishGuarded(addr.roundContent(this.room, index), content)
     this.emit()
   }
 
